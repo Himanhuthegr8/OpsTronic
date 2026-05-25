@@ -124,8 +124,10 @@ function DashboardPage() {
 // ─── Overview ────────────────────────────────────────────────────────────────
 function Overview({ onNavigate }: { onNavigate: (s: Section) => void }) {
   const { incidents, rcaReports } = useAppState();
-  const open = incidents.filter((i) => i.status !== "resolved").length;
-  const critical = incidents.filter((i) => i.severity === "critical" && i.status !== "resolved").length;
+  const rcaIncidents = useMemo(() => rcaReports.map(rcaReportToIncident), [rcaReports]);
+  const allIncidents = useMemo(() => [...rcaIncidents, ...incidents], [rcaIncidents, incidents]);
+  const open = allIncidents.filter((i) => i.status !== "resolved").length;
+  const critical = allIncidents.filter((i) => i.severity === "critical" && i.status !== "resolved").length;
   const ack = incidents.filter((i) => i.status === "acknowledged").length;
 
   return (
@@ -255,19 +257,52 @@ function RCAList({ reports }: { reports: RCAReport[] }) {
 }
 
 // ─── Incidents ────────────────────────────────────────────────────────────────
+function rcaReportToIncident(report: RCAReport): {
+  id: string;
+  ticketId: string;
+  service: string;
+  message: string;
+  severity: Severity;
+  status: IncidentStatus;
+  detectedAt: number;
+} {
+  const rca = report.rca_report ?? {};
+  const confidence = String(rca.confidence ?? "medium").toLowerCase();
+  const rootCause = rca.root_cause ?? rca.summary ?? report.error ?? "RCA generated";
+  const createdAt = report.analyzed_at ? new Date(report.analyzed_at).getTime() : Date.now();
+  const severity: Severity =
+    report.is_deployment_related || confidence === "high"
+      ? "high"
+      : confidence === "low"
+        ? "low"
+        : "medium";
+
+  return {
+    id: `rca-${report.id}`,
+    ticketId: `RCA-${String(report.id).slice(0, 6).toUpperCase()}`,
+    service: report.service ?? "unknown-service",
+    message: rootCause,
+    severity,
+    status: "open",
+    detectedAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+  };
+}
+
 function Incidents() {
-  const { incidents } = useAppState();
+  const { incidents, rcaReports } = useAppState();
   const [q, setQ] = useState("");
   const [sev, setSev] = useState<"all" | Severity>("all");
   const [status, setStatus] = useState<"all" | IncidentStatus>("all");
+  const rcaIncidents = useMemo(() => rcaReports.map(rcaReportToIncident), [rcaReports]);
+  const allIncidents = useMemo(() => [...rcaIncidents, ...incidents], [rcaIncidents, incidents]);
 
   const filtered = useMemo(() =>
-    incidents.filter((i) => {
+    allIncidents.filter((i) => {
       if (sev !== "all" && i.severity !== sev) return false;
       if (status !== "all" && i.status !== status) return false;
       if (q && !`${i.message} ${i.service} ${i.ticketId}`.toLowerCase().includes(q.toLowerCase())) return false;
       return true;
-    }), [incidents, q, sev, status]);
+    }), [allIncidents, q, sev, status]);
 
   return (
     <div className="rounded-xl border border-border bg-card/60 shadow-[var(--shadow-elegant)]">
