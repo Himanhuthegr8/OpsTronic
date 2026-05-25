@@ -7,6 +7,7 @@ Manages all environment variables and application settings.
 from pydantic_settings import BaseSettings
 from typing import Optional
 import os
+from urllib.parse import urlparse
 
 
 class Settings(BaseSettings):
@@ -77,12 +78,19 @@ class Settings(BaseSettings):
         return self.ENVIRONMENT.lower() in {"production", "prod"}
 
     def cors_origins(self) -> list[str]:
+        def normalize_origin(value: str) -> str:
+            cleaned = value.strip().rstrip("/")
+            parsed = urlparse(cleaned)
+            if parsed.scheme and parsed.netloc:
+                return f"{parsed.scheme}://{parsed.netloc}"
+            return cleaned
+
         configured = [
-            origin.strip().rstrip("/")
+            normalize_origin(origin)
             for origin in self.CORS_ALLOWED_ORIGINS.split(",")
             if origin.strip()
         ]
-        frontend = self.FRONTEND_URL.rstrip("/")
+        frontend = normalize_origin(self.FRONTEND_URL)
         origins = configured or [frontend]
         if not self.is_production():
             origins.extend([
