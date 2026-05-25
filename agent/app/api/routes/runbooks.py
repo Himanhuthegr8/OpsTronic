@@ -3,7 +3,7 @@ Runbook management routes.
 """
 
 import re
-import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -33,26 +33,113 @@ def _safe_slug(value: str) -> str:
     return slug[:80] or "runbook"
 
 
-def _write_and_index(*, github_id: str, title: str, content: str, repo: str = "", service: str = "") -> dict:
+def _scope_slug(*, github_id: str, title: str, repo: str = "", service: str = "") -> str:
+    scope = service.strip() or repo.strip().replace("/", "-") or title
+    return _safe_slug(f"{github_id}-{scope}-ops-runbook")
+
+
+def _canonical_title(*, title: str, repo: str = "", service: str = "") -> str:
+    if service.strip():
+        return f"{service.strip()} Operations Runbook"
+    if repo.strip():
+        return f"{repo.strip()} Operations Runbook"
+    return title
+
+
+def _base_runbook(*, title: str, repo: str = "", service: str = "") -> str:
+    scoped_title = _canonical_title(title=title, repo=repo, service=service)
+    return f"""# {scoped_title}
+
+## Scope
+Service: {service or "Any"}
+Repository: {repo or "Any"}
+
+## Detection Signals
+- Container exits, restarts, OOM events, or log lines containing errors, exceptions, tracebacks, fatal signals, or panics.
+- Deployment correlation is stronger when the incident happens soon after a GitHub push webhook.
+- Treat repeated failures within a short window as a likely service incident, not a one-off log line.
+
+## First Response
+1. Confirm the affected service/container is still running.
+2. Check the most recent OpsTronic RCA report for root cause, confidence, and deployment correlation.
+3. Inspect the last 100 container log lines around the first error.
+4. If the incident followed a deployment, compare the failing code path with the pushed commit.
+5. Decide whether to roll back, hotfix, or keep observing based on severity and customer impact.
+
+## Triage Checklist
+- Verify the failing endpoint, job, or startup path.
+- Identify the first error, not only follow-on stack traces.
+- Check environment variables, database connectivity, external API credentials, and network timeouts.
+- Look for crash loops, OOM kills, missing files, port binding failures, and dependency import errors.
+- Confirm whether the error started after the latest deployment.
+
+## Immediate Mitigation
+- Roll back the latest deployment when the error is high severity and clearly deployment-related.
+- Restart the service only when the failure is transient and restart is known to be safe.
+- Disable the affected feature path if a narrow feature flag or route-level mitigation exists.
+- Escalate to the service owner if customer-facing impact continues after mitigation.
+
+## Permanent Fix Guidance
+- Add a regression test that reproduces the failing path.
+- Add startup validation for required environment variables and external dependencies.
+- Improve structured logging around the failing endpoint or background job.
+- Update this runbook with the confirmed root cause and fix after the incident.
+"""
+
+
+def _append_section(existing: str, heading: str, body: str) -> str:
+    timestamp = datetime.utcnow().isoformat()
+    return f"{existing.rstrip()}\n\n## {heading} - {timestamp}\n{body.strip()}\n"
+
+
+def _write_and_index(
+    *,
+    github_id: str,
+    title: str,
+    content: str,
+    repo: str = "",
+    service: str = "",
+    append_heading: str = "",
+    base_content: str = "",
+) -> dict:
     RUNBOOK_DIR.mkdir(parents=True, exist_ok=True)
-    runbook_id = f"{github_id}-{uuid.uuid4().hex[:10]}"
-    filename = f"{_safe_slug(title)}-{runbook_id}.md"
+    runbook_id = _scope_slug(github_id=github_id, title=title, repo=repo, service=service)
+    filename = f"{runbook_id}.md"
+    path = RUNBOOK_DIR / filename
+
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
     clean_content = redact_text(content)
-    (RUNBOOK_DIR / filename).write_text(clean_content, encoding="utf-8")
+    if existing and append_heading:
+        final_content = _append_section(existing, append_heading, clean_content)
+        updated = True
+    elif existing:
+        final_content = _append_section(existing, "Runbook Update", clean_content)
+        updated = True
+    else:
+        final_content = redact_text(base_content) if base_content else clean_content
+        updated = False
+
+    path.write_text(final_content, encoding="utf-8")
 
     ChromaStore().add_documents([
         {
             "id": runbook_id,
             "filename": filename,
-            "title": title,
-            "content": clean_content,
+            "title": _canonical_title(title=title, repo=repo, service=service),
+            "content": final_content,
             "github_id": github_id,
             "repo": repo,
             "service": service,
         }
     ])
 
-    return {"id": runbook_id, "filename": filename, "title": title, "indexed": True}
+    return {
+        "id": runbook_id,
+        "filename": filename,
+        "title": _canonical_title(title=title, repo=repo, service=service),
+        "indexed": True,
+        "updated": updated,
+    }
 
 
 @router.post("/upload")
@@ -75,12 +162,19 @@ async def upload_runbook(
         raise HTTPException(status_code=400, detail="Runbook must be UTF-8 encoded")
 
     title = Path(file.filename).stem.replace("_", " ").replace("-", " ").title()
+    initial_content = f"""{_base_runbook(title=title, repo=repo, service=service)}
+
+## User Supplied Runbook Context
+{content}
+"""
     result = _write_and_index(
         github_id=user["github_id"],
         title=title,
         content=content,
         repo=repo,
         service=service,
+        append_heading="User Supplied Runbook Context",
+        base_content=initial_content,
     )
     return {"status": "indexed", "runbook": result}
 
@@ -88,26 +182,23 @@ async def upload_runbook(
 @router.post("/from-rca")
 async def create_runbook_from_rca(payload: RunbookFromRCARequest, user: dict = GitHubAuth):
     actions = "\n".join(f"{idx + 1}. {action}" for idx, action in enumerate(payload.recommended_actions))
-    content = f"""# {payload.title}
-
-## Scope
-Service: {payload.service or "Any"}
-Repository: {payload.repo or "Any"}
-
-## RCA Summary
+    update = f"""### RCA Summary
 {payload.rca_summary}
 
-## Root Cause
+### Root Cause
 {payload.root_cause or "Unknown"}
 
-## Remediation
+### Remediation
 {actions or "1. Investigate the linked RCA and add concrete remediation steps."}
 """
+    initial_content = f"{_base_runbook(title=payload.title, repo=payload.repo, service=payload.service)}\n\n## RCA Learning\n{update}"
     result = _write_and_index(
         github_id=user["github_id"],
         title=payload.title,
-        content=content,
+        content=update,
         repo=payload.repo,
         service=payload.service,
+        append_heading=f"RCA Learning: {payload.title}",
+        base_content=initial_content,
     )
     return {"status": "indexed", "runbook": result}
