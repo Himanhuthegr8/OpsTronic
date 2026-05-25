@@ -96,6 +96,7 @@ export interface RCAReport {
   environment?: string;
   env?: string;
   analyzed_at?: string;
+  created_at?: string;
   processing_time_ms?: number;
   is_deployment_related?: boolean;
   deployment_context?: {

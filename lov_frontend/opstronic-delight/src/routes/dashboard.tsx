@@ -209,7 +209,7 @@ function RCAList({ reports }: { reports: RCAReport[] }) {
                 <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">{rootCause}</p>
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted-foreground">
-                {r.analyzed_at && <span>{relativeTime(new Date(r.analyzed_at).getTime())}</span>}
+                {reportTime(r) && <span>{relativeTime(reportTime(r))}</span>}
                 {r.processing_time_ms && <span>⏱ {(r.processing_time_ms / 1000).toFixed(1)}s</span>}
               </div>
             </div>
@@ -222,6 +222,12 @@ function RCAList({ reports }: { reports: RCAReport[] }) {
       })}
     </div>
   );
+}
+
+function reportTime(report: RCAReport): number {
+  const value = report.analyzed_at ?? report.created_at ?? "";
+  const time = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(time) ? time : 0;
 }
 
 function RCADetail({ report }: { report: RCAReport }) {
@@ -239,7 +245,7 @@ function RCADetail({ report }: { report: RCAReport }) {
       <div className="grid gap-3 md:grid-cols-3">
         <DetailStat label="Trigger" value={report.error ?? rca.ingestion_mode ?? "log event"} />
         <DetailStat label="Confidence" value={String(rca.confidence ?? "medium")} />
-        <DetailStat label="Analyzed" value={report.analyzed_at ? relativeTime(new Date(report.analyzed_at).getTime()) : "just now"} />
+        <DetailStat label="Analyzed" value={reportTime(report) ? relativeTime(reportTime(report)) : "just now"} />
       </div>
 
       <DetailSection title="Root Cause">
@@ -390,7 +396,7 @@ function rcaReportToIncident(report: RCAReport): {
   const rca = report.rca_report ?? {};
   const confidence = String(rca.confidence ?? "medium").toLowerCase();
   const rootCause = rca.root_cause ?? rca.summary ?? report.error ?? "RCA generated";
-  const createdAt = report.analyzed_at ? new Date(report.analyzed_at).getTime() : Date.now();
+  const createdAt = reportTime(report) || Date.now();
   const severity: Severity =
     report.is_deployment_related || confidence === "high"
       ? "high"
@@ -405,7 +411,7 @@ function rcaReportToIncident(report: RCAReport): {
     message: rootCause,
     severity,
     status: "open",
-    detectedAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    detectedAt: createdAt,
   };
 }
 
@@ -424,6 +430,30 @@ function Incidents() {
       if (q && !`${i.message} ${i.service} ${i.ticketId}`.toLowerCase().includes(q.toLowerCase())) return false;
       return true;
     }), [allIncidents, q, sev, status]);
+
+  const exportCsv = () => {
+    const rows = [
+      ["Ticket", "Service", "Message", "Severity", "Status", "Detected"],
+      ...filtered.map((incident) => [
+        incident.ticketId,
+        incident.service,
+        incident.message,
+        incident.severity,
+        incident.status,
+        new Date(incident.detectedAt).toISOString(),
+      ]),
+    ];
+    const csv = rows
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `opstronic-incidents-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="rounded-xl border border-border bg-card/60 shadow-[var(--shadow-elegant)]">
@@ -451,7 +481,9 @@ function Incidents() {
             <SelectItem value="resolved">Resolved</SelectItem>
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" className="gap-2"><Filter className="size-4" /> Export</Button>
+        <Button variant="outline" size="sm" className="gap-2" onClick={exportCsv}>
+          <Filter className="size-4" /> Export
+        </Button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
