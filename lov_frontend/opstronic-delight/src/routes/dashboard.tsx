@@ -214,46 +214,167 @@ function RCAList({ reports }: { reports: RCAReport[] }) {
               </div>
             </div>
 
-            {/* Expanded detail */}
             {isOpen && (
-              <div className="mt-4 space-y-3 rounded-lg border border-border bg-background/50 p-4 text-sm">
-                {rca.summary && <p className="text-muted-foreground">{rca.summary}</p>}
-                {actions.length > 0 && (
-                  <div>
-                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Recommended Actions
-                    </div>
-                    <ol className="space-y-1.5 list-decimal list-inside text-xs text-foreground">
-                      {actions.map((a, i) => <li key={i}>{a}</li>)}
-                    </ol>
-                  </div>
-                )}
-                {r.deployment_context?.commit_sha && (
-                  <div className="flex items-center gap-2 rounded bg-muted px-3 py-2 text-xs font-mono">
-                    <span className="text-muted-foreground">commit</span>
-                    <span className="text-primary">{r.deployment_context.commit_sha.slice(0, 12)}</span>
-                    {r.deployment_context.author && (
-                      <span className="text-muted-foreground">by {r.deployment_context.author}</span>
-                    )}
-                  </div>
-                )}
-                {(r.error || r.raw_error) && (
-                  <details className="text-xs">
-                    <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                      Raw stacktrace
-                    </summary>
-                    <pre className="mt-2 max-h-48 overflow-auto rounded bg-[#0d1117] p-3 text-[11px] text-[#94a3b8] whitespace-pre-wrap">
-                      {r.raw_error ?? r.error}
-                    </pre>
-                  </details>
-                )}
-              </div>
+              <RCADetail report={r} />
             )}
           </div>
         );
       })}
     </div>
   );
+}
+
+function RCADetail({ report }: { report: RCAReport }) {
+  const rca = report.rca_report ?? {};
+  const actions = arrayify(rca.recommended_actions ?? rca.recommendations);
+  const factors = arrayify(rca.contributing_factors);
+  const signals = arrayify(rca.error_signals ?? rca.signals);
+  const evidence = objectify(rca.evidence);
+  const suspect = objectify(rca.suspect_code_change);
+  const rollback = objectify(rca.rollback_recommendation);
+  const context = objectify(report.deployment_context);
+
+  return (
+    <div className="mt-4 space-y-4 rounded-lg border border-border bg-background/50 p-4 text-sm">
+      <div className="grid gap-3 md:grid-cols-3">
+        <DetailStat label="Trigger" value={report.error ?? rca.ingestion_mode ?? "log event"} />
+        <DetailStat label="Confidence" value={String(rca.confidence ?? "medium")} />
+        <DetailStat label="Analyzed" value={report.analyzed_at ? relativeTime(new Date(report.analyzed_at).getTime()) : "just now"} />
+      </div>
+
+      <DetailSection title="Root Cause">
+        <p>{rca.root_cause ?? rca.summary ?? "No root cause returned."}</p>
+      </DetailSection>
+
+      {rca.error_correlation && (
+        <DetailSection title="Error Correlation">
+          <p>{String(rca.error_correlation)}</p>
+        </DetailSection>
+      )}
+
+      {signals.length > 0 && (
+        <DetailSection title="Signals">
+          <div className="flex flex-wrap gap-2">
+            {signals.map((signal, i) => (
+              <span key={i} className="rounded-full bg-primary/10 px-2 py-1 text-xs text-primary">
+                {signal}
+              </span>
+            ))}
+          </div>
+        </DetailSection>
+      )}
+
+      {Object.keys(evidence).length > 0 && (
+        <DetailSection title="Evidence">
+          <KeyValueGrid data={evidence} />
+        </DetailSection>
+      )}
+
+      {Object.keys(suspect).length > 0 && (
+        <DetailSection title="Suspect Code Change">
+          <KeyValueGrid data={suspect} />
+        </DetailSection>
+      )}
+
+      {Object.keys(context).length > 0 && (
+        <DetailSection title="Deployment Context">
+          <KeyValueGrid data={context} />
+        </DetailSection>
+      )}
+
+      {factors.length > 0 && (
+        <DetailSection title="Contributing Factors">
+          <ul className="list-disc space-y-1 pl-5 text-xs">
+            {factors.map((factor, i) => <li key={i}>{factor}</li>)}
+          </ul>
+        </DetailSection>
+      )}
+
+      {actions.length > 0 && (
+        <DetailSection title="Recommended Actions">
+          <ol className="list-decimal space-y-1.5 pl-5 text-xs">
+            {actions.map((action, i) => <li key={i}>{action}</li>)}
+          </ol>
+        </DetailSection>
+      )}
+
+      {Object.keys(rollback).length > 0 && (
+        <DetailSection title="Rollback Recommendation">
+          <KeyValueGrid data={rollback} />
+        </DetailSection>
+      )}
+
+      {rca.timeline && (
+        <DetailSection title="Timeline">
+          <p>{String(rca.timeline)}</p>
+        </DetailSection>
+      )}
+
+      {(report.raw_error || report.error) && (
+        <DetailSection title="Captured Error">
+          <pre className="max-h-52 overflow-auto rounded bg-[#0d1117] p-3 text-[11px] text-[#94a3b8] whitespace-pre-wrap">
+            {report.raw_error ?? report.error}
+          </pre>
+        </DetailSection>
+      )}
+
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+          Raw RCA JSON
+        </summary>
+        <pre className="mt-2 max-h-64 overflow-auto rounded bg-[#0d1117] p-3 text-[11px] text-[#94a3b8] whitespace-pre-wrap">
+          {JSON.stringify(rca, null, 2)}
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+function DetailStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-card/60 p-3">
+      <div className="text-[11px] font-semibold uppercase text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-sm font-medium">{value}</div>
+    </div>
+  );
+}
+
+function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+      <div className="text-xs leading-relaxed text-foreground">{children}</div>
+    </section>
+  );
+}
+
+function KeyValueGrid({ data }: { data: Record<string, unknown> }) {
+  return (
+    <div className="grid gap-2 md:grid-cols-2">
+      {Object.entries(data).map(([key, value]) => (
+        <div key={key} className="rounded-md border border-border bg-card/60 p-3">
+          <div className="text-[11px] font-semibold uppercase text-muted-foreground">{key}</div>
+          <div className="mt-1 break-words text-xs">{formatValue(value)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function arrayify(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+}
+
+function objectify(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function formatValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(formatValue).join(", ");
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return String(value ?? "");
 }
 
 // ─── Incidents ────────────────────────────────────────────────────────────────
