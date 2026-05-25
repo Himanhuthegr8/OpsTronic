@@ -54,6 +54,8 @@ class RCAOrchestrator:
             dict: Structured RCA report from the SynthesizerAgent.
         """
         logger.info("Starting RCA pipeline")
+        metadata = metadata or {}
+        github_token = str(metadata.pop("_github_token", "") or "")
 
         # Step 1: Extract error signals from logs
         logger.info("Step 1: Analyzing logs")
@@ -66,7 +68,7 @@ class RCAOrchestrator:
         # Step 2: Fetch recent commits (failure is non-fatal — returns empty commits)
         logger.info("Step 2: Fetching commits")
         try:
-            commit_analysis = await self.commit_agent.analyze(repo)
+            commit_analysis = await self.commit_agent.analyze(repo, github_token=github_token)
         except Exception as e:
             logger.error(f"CommitAgent failed: {e}", exc_info=True)
             commit_analysis = {"error": str(e), "commits": []}

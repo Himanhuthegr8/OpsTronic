@@ -160,10 +160,13 @@ class EventEngine:
             should_run_rca = True
             status = "rca_triggered"
             message = "Crash loop detected. RCA triggered."
-        elif event.type == "log_error" and watch:
+        elif event.type == "log_error":
             should_run_rca = True
             status = "rca_triggered"
-            message = "Log error detected during active watch mode. RCA triggered."
+            if watch:
+                message = "Log error detected during active watch mode. RCA triggered."
+            else:
+                message = "Log error detected. RCA triggered."
 
         agent_stale = await self._is_agent_stale(event.github_id)
         if agent_stale:
@@ -214,6 +217,12 @@ class EventEngine:
             "correlation": event.correlation,
             **event.metadata,
         }
+        try:
+            user = await self.db.get_user_by_github_id(event.github_id)
+            if user and user.get("github_token"):
+                metadata["_github_token"] = user["github_token"]
+        except Exception as exc:
+            logger.debug("[EVENT] Could not load GitHub token for commit context: %s", exc)
         try:
             return await self.orchestrator.analyze(
                 service=event.service_name,

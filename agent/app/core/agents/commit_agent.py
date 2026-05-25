@@ -9,9 +9,9 @@ class CommitAgent:
     def __init__(self):
         self.github = GitHubClient()
     
-    async def analyze(self, repo: str) -> Dict[str, Any]:
+    async def analyze(self, repo: str, github_token: str = "") -> Dict[str, Any]:
         try:
-            commits = await self.github.fetch_recent_commits(repo, limit=10)
+            commits = await self.github.fetch_recent_commits(repo, limit=10, token=github_token)
             
             commit_summaries = []
             for commit in commits:

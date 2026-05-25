@@ -54,6 +54,14 @@ class WatchModeManager:
         entry = self._watches.get(self._key(github_id, service_name))
         if entry:
             return entry
+        user_watches = [watch for watch in self._watches.values() if watch.github_id == github_id]
+        if len(user_watches) == 1:
+            logger.info(
+                "[WATCH] Falling back to the user's only active watch: requested=%s active=%s",
+                service_name,
+                user_watches[0].service_name,
+            )
+            return user_watches[0]
         return await self._get_watch_from_db(github_id, service_name)
 
     def get_watches_for_user(self, github_id: str) -> List[WatchEntry]:
@@ -92,20 +100,30 @@ class WatchModeManager:
             logger.debug("[WATCH] DB fallback failed: %s", exc)
             return None
 
+        exact_service_match = True
         if not deployment:
-            return None
+            try:
+                deployment = await self.db.get_active_deployment_db(github_id=github_id)
+            except TypeError:
+                deployment = await self.db.get_active_deployment_db()
+            except Exception as exc:
+                logger.debug("[WATCH] DB fallback by user failed: %s", exc)
+                return None
+            if not deployment:
+                return None
+            exact_service_match = False
 
         now = datetime.now(timezone.utc)
         watched_service = deployment.get("service_name")
         services = deployment.get("services_watched") or deployment.get("metadata", {}).get("services_watched") or []
-        if watched_service and watched_service != service_name:
+        if exact_service_match and watched_service and watched_service != service_name:
             return None
-        if services and service_name not in services:
+        if exact_service_match and services and service_name not in services:
             return None
 
         entry = WatchEntry(
             github_id=github_id,
-            service_name=service_name,
+            service_name=watched_service or service_name,
             commit_sha=deployment.get("commit_sha", ""),
             repository=deployment.get("repository", ""),
             author=deployment.get("author", "unknown"),

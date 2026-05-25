@@ -438,7 +438,7 @@ class Database:
         try:
             result = (
                 self.client.table("opstronic_users")
-                .select("github_id, login, agent_api_key, session_token")
+                .select("github_id, login, agent_api_key, session_token, github_token")
                 .eq("github_id", github_id)
                 .single()
                 .execute()

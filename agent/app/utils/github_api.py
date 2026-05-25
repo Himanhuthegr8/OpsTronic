@@ -11,14 +11,20 @@ class GitHubClient:
         self.token = settings.GITHUB_TOKEN
         self.base_url = "https://api.github.com"
     
-    async def fetch_recent_commits(self, repo: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def fetch_recent_commits(
+        self,
+        repo: str,
+        limit: int = 10,
+        token: str = "",
+    ) -> List[Dict[str, Any]]:
         if repo.startswith("https://github.com/"):
             repo = repo.replace("https://github.com/", "")
         
         url = f"{self.base_url}/repos/{repo}/commits"
         headers = {"Accept": "application/vnd.github.v3+json"}
-        if self.token:
-            headers["Authorization"] = f"token {self.token}"
+        auth_token = token or self.token
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
         
         params = {"per_page": limit}
         
@@ -48,7 +54,12 @@ class GitHubClient:
             logger.error(f"Failed to fetch commits: {str(e)}")
             return []
     
-    async def fetch_commit_diff(self, repo: str, commit_sha: str) -> Dict[str, Any]:
+    async def fetch_commit_diff(
+        self,
+        repo: str,
+        commit_sha: str,
+        token: str = "",
+    ) -> Dict[str, Any]:
         """
         Fetch the diff (changed files and patches) for a specific commit.
         
@@ -66,8 +77,9 @@ class GitHubClient:
         
         url = f"{self.base_url}/repos/{repo}/commits/{commit_sha}"
         headers = {"Accept": "application/vnd.github.v3+json"}
-        if self.token:
-            headers["Authorization"] = f"token {self.token}"
+        auth_token = token or self.token
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
         
         try:
             async with aiohttp.ClientSession() as session:

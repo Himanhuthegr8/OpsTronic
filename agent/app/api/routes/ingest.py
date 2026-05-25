@@ -193,6 +193,12 @@ async def ingest_error(payload: ErrorPayload, _agent: dict = AgentKeyAuth):
     # Check if we're in deployment watch mode
     active_deployment = await deployment_watcher.get_active_deployment()
     deployment_context = None
+    github_token = ""
+    try:
+        user_row = await db.get_user_by_github_id(agent_user_id)
+        github_token = (user_row or {}).get("github_token", "")
+    except Exception as e:
+        logger.debug(f"[{request_id}] Could not load GitHub token for commit context: {e}")
     
     if active_deployment:
         logger.warning(f"[{request_id}] [DEPLOY-ALERT] Error during active deployment!")
@@ -201,7 +207,8 @@ async def ingest_error(payload: ErrorPayload, _agent: dict = AgentKeyAuth):
         # Fetch the commit diff for correlation
         commit_diff = await github_client.fetch_commit_diff(
             repo=active_deployment['repository'],
-            commit_sha=active_deployment['commit_sha']
+            commit_sha=active_deployment['commit_sha'],
+            token=github_token,
         )
         
         deployment_context = {
@@ -251,6 +258,8 @@ async def ingest_error(payload: ErrorPayload, _agent: dict = AgentKeyAuth):
         # Include deployment context in metadata
         if deployment_context:
             metadata["deployment_context"] = deployment_context
+        if github_token:
+            metadata["_github_token"] = github_token
         
         # Run the orchestrator with metadata
         result = await orchestrator.analyze(
