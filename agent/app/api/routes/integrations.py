@@ -18,12 +18,24 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.api.middleware.auth import GitHubAuth
+from app.core.config.settings import settings
 from app.db.supabase_client import db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/integrations")
 
 GITHUB_API = "https://api.github.com"
+
+
+def _webhook_config(webhook_url: str) -> dict:
+    config = {
+        "url": webhook_url,
+        "content_type": "json",
+        "insecure_ssl": "0",
+    }
+    if settings.WEBHOOK_SECRET:
+        config["secret"] = settings.WEBHOOK_SECRET
+    return config
 
 
 # =============================================================================
@@ -144,6 +156,30 @@ async def install_webhook(body: InstallWebhookRequest, session: dict = GitHubAut
         for hook in existing.json():
             if hook.get("config", {}).get("url") == body.webhook_url:
                 logger.info(f"Webhook already exists on {body.owner}/{body.repo} (id={hook['id']})")
+                async with httpx.AsyncClient() as client:
+                    update = await client.patch(
+                        f"{GITHUB_API}/repos/{body.owner}/{body.repo}/hooks/{hook['id']}",
+                        json={
+                            "active": True,
+                            "events": ["push"],
+                            "config": _webhook_config(body.webhook_url),
+                        },
+                        headers={
+                            "Authorization": f"Bearer {github_token}",
+                            "Accept": "application/vnd.github.v3+json",
+                            "X-GitHub-Api-Version": "2022-11-28",
+                        },
+                        timeout=10,
+                    )
+                if update.status_code not in (200, 201):
+                    logger.warning(
+                        "Failed to refresh existing webhook %s on %s/%s: %s %s",
+                        hook["id"],
+                        body.owner,
+                        body.repo,
+                        update.status_code,
+                        update.text,
+                    )
                 await db.upsert_repo(
                     github_id=session["github_id"],
                     repo_full_name=f"{body.owner}/{body.repo}",
@@ -163,15 +199,9 @@ async def install_webhook(body: InstallWebhookRequest, session: dict = GitHubAut
             f"{GITHUB_API}/repos/{body.owner}/{body.repo}/hooks",
             json={
                 "name": "web",
-                # active=False skips GitHub's validation ping, which fails for localhost URLs.
-                # The webhook will activate automatically once the URL is publicly reachable.
-                "active": False,
+                "active": True,
                 "events": ["push"],
-                "config": {
-                    "url": body.webhook_url,
-                    "content_type": "json",
-                    "insecure_ssl": "0",
-                },
+                "config": _webhook_config(body.webhook_url),
             },
             headers={
                 "Authorization": f"Bearer {github_token}",

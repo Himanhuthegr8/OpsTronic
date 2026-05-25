@@ -398,8 +398,9 @@ function StepDocker({ apiKey, serviceName }: { apiKey: string; serviceName: stri
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
+  # Add this label under your existing app service:
   ${watchedService}:
-    image: ${watchedService}:latest
+    # keep your existing image/build/ports here
     labels:
       opstronic.monitor: "true"`;
 

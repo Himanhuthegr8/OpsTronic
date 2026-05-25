@@ -17,6 +17,7 @@ aiohttp==3.11.11
 requests==2.32.3
 
 # Database (chromadb import is wrapped in try/except in vector_store.py)
+numpy<2.0
 chromadb==0.4.24
 
 # Resilience
