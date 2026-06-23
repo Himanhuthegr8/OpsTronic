@@ -9,6 +9,7 @@ const APP_BASE = import.meta.env.PROD ? "/OpsTronic" : "";
 // ─── Auth token helpers ────────────────────────────────────────────────────
 export const TOKEN_KEY = "ops_token";
 export const AGENT_KEY = "ops_agent_key";
+const APP_STATE_KEY = "opstronic:state:v2";
 
 export function appPath(path: string): string {
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
@@ -29,6 +30,7 @@ export function clearAuth() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(AGENT_KEY);
   localStorage.removeItem("ops_connected_repo");
+  localStorage.removeItem(APP_STATE_KEY);
 }
 
 // ─── Base fetch helper ─────────────────────────────────────────────────────

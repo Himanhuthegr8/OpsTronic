@@ -94,6 +94,8 @@ function load(): AppState {
   try {
     // Token always comes from localStorage directly (set by OAuth callback handler)
     const token = localStorage.getItem(TOKEN_KEY) ?? "";
+    if (!token) return defaultState;
+
     const raw = localStorage.getItem(KEY);
     const parsed: Partial<AppState> = raw ? (JSON.parse(raw) as AppState) : {};
     return {
